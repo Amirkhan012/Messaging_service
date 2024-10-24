@@ -1,0 +1,9 @@
+fastapi==0.95.1
+uvicorn==0.22.0
+sqlalchemy==2.0.0
+psycopg2-binary==2.9.5
+alembic==1.10.3
+redis==4.5.1
+celery==5.2.7
+aiogram==3.0.0b7
+python-dotenv==0.21.0
