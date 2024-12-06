@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Чат в реальном времени</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; }
+        .container { width: 80%; display: flex; height: 90vh; }
+        .users, .chat-window { padding: 20px; overflow-y: auto; }
+        .users { width: 25%; background-color: #f0f0f0; }
+        .chat-window { width: 75%; display: flex; flex-direction: column; }
+        .messages { flex: 1; border-bottom: 1px solid #ddd; padding: 10px; }
+        .message { margin: 5px 0; }
+        .input-area { display: flex; }
+        .input-area input { flex: 1; padding: 10px; }
+        .input-area button { padding: 10px; }
+    </style>
+</head>
+<body onload="initializeChatApp()">
+    <div id="auth-section">
+        <h2 id="auth-title">Вход</h2>
+        <div id="login-form">
+            <input type="text" id="username" placeholder="Имя пользователя">
+            <input type="password" id="password" placeholder="Пароль">
+            <button onclick="login()">Войти</button>
+            <p>Нет аккаунта? <button onclick="showRegisterForm()">Зарегистрироваться</button></p>
+        </div>
+        <div id="register-form" style="display: none;">
+            <input type="text" id="reg-username" placeholder="Имя пользователя">
+            <input type="email" id="reg-email" placeholder="Электронная почта">
+            <input type="password" id="reg-password" placeholder="Пароль">
+            <button onclick="register()">Зарегистрироваться</button>
+            <p>Уже есть аккаунт? <button onclick="showLoginForm()">Войти</button></p>
+        </div>
+    </div>
+
+    <div id="chat-section" class="container" style="display: none;">
+        <div class="users">
+            <h3>Пользователи</h3>
+            <ul id="users-list"></ul>
+        </div>
+        <div class="chat-window">
+            <div id="messages" class="messages"></div>
+            <div class="input-area">
+                <input type="text" id="message-input" placeholder="Введите сообщение...">
+                <button onclick="sendMessage()">Отправить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let accessToken = null;
+        let websocket = null;
+        let currentChatUserId = null;
+        let currentChatId = null;
+
+        async function initializeChatApp() {
+            accessToken = localStorage.getItem('accessToken');
+            if (accessToken) {
+                const response = await fetch('/users', { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                if (response.ok) {
+                    document.getElementById('auth-section').style.display = 'none';
+                    document.getElementById('chat-section').style.display = 'flex';
+                    loadUsers();
+                } else {
+                    localStorage.removeItem('accessToken');
+                    showLoginForm();
+                }
+            } else {
+                showLoginForm();
+            }
+        }
+
+        function showRegisterForm() {
+            document.getElementById('login-form').style.display = 'none';
+            document.getElementById('register-form').style.display = 'block';
+            document.getElementById('auth-title').textContent = 'Регистрация';
+        }
+
+        function showLoginForm() {
+            document.getElementById('register-form').style.display = 'none';
+            document.getElementById('login-form').style.display = 'block';
+            document.getElementById('auth-title').textContent = 'Вход';
+        }
+
+        async function register() {
+            const username = document.getElementById('reg-username').value;
+            const email = document.getElementById('reg-email').value;
+            const password = document.getElementById('reg-password').value;
+            const response = await fetch('/register/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email, password })
+            });
+            if (response.ok) {
+                alert('Регистрация успешна, теперь войдите');
+                showLoginForm();
+            } else {
+                alert('Ошибка при регистрации');
+            }
+        }
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const response = await fetch('/login/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                accessToken = data.access_token;
+                localStorage.setItem('accessToken', accessToken);
+                document.getElementById('auth-section').style.display = 'none';
+                document.getElementById('chat-section').style.display = 'flex';
+                loadUsers();
+            } else {
+                alert('Ошибка при входе');
+            }
+        }
+
+        async function fetchWithAuth(url, options = {}) {
+            const token = localStorage.getItem('accessToken');
+            const headers = options.headers || {};
+            headers['Authorization'] = `Bearer ${token}`;
+            return await fetch(url, { ...options, headers });
+        }
+
+        async function loadUsers() {
+            const response = await fetchWithAuth('/users');
+            if (response.ok) {
+                const users = await response.json();
+                const usersList = document.getElementById('users-list');
+                usersList.innerHTML = '';
+                users.forEach(user => {
+                    const userItem = document.createElement('li');
+                    userItem.textContent = user.username;
+                    userItem.onclick = () => startChatWithUser(user.id);
+                    usersList.appendChild(userItem);
+                });
+            } else {
+                console.error("Не удалось загрузить пользователей.");
+            }
+        }
+
+        async function startChatWithUser(userId) {
+            currentChatUserId = userId;
+            const response = await fetchWithAuth(`/chats/get_or_create/${userId}`);
+            if (response.ok) {
+                const chat = await response.json();
+                loadChatMessages(chat.id);
+                openWebSocket(chat.id);
+            } else {
+                console.log("Не удалось получить или создать чат");
+            }
+        }
+
+        function openWebSocket(chatId) {
+            if (websocket) websocket.close();
+            const token = localStorage.getItem('accessToken');
+            websocket = new WebSocket(`ws://localhost:8000/ws/${chatId}?token=${token}`);
+            websocket.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                displayMessage(message.sender_id, message.content);
+            };
+        }
+
+        async function loadChatMessages(chatId) {
+            const response = await fetchWithAuth(`/chats/${chatId}/messages/`);
+            if (response.ok) {
+                const messages = await response.json();
+                const messagesContainer = document.getElementById('messages');
+                messagesContainer.innerHTML = '';
+                messages.forEach(msg => displayMessage(msg.sender_id, msg.content));
+            }
+        }
+
+        function displayMessage(senderId, content) {
+            const messagesContainer = document.getElementById('messages');
+            const messageElement = document.createElement('div');
+            messageElement.className = 'message';
+            messageElement.textContent = `${senderId}: ${content}`;
+            messagesContainer.appendChild(messageElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const content = document.getElementById('message-input').value;
+            if (content.trim() !== '' && websocket) {
+                websocket.send(content);
+                document.getElementById('message-input').value = '';
+            }
+        }
+    </script>
+</body>
+</html>
