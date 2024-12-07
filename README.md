@@ -77,6 +77,6 @@ docker-compose exec app alembic upgrade head
 
 После запуска приложение доступно по адресу:
 
-**API документация:** [http://«Адрес»/docs](http://127.0.0.1:8000/docs)
+**API документация:** [http://———/docs](http://127.0.0.1:8000/docs)
 
 **Swagger UI** позволяет отправлять запросы и тестировать API.
